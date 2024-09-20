@@ -1,5 +1,6 @@
 #include "ImgPro.h"
-//#include<iostream>
+#include<iostream>
+#include <fstream>
 #include <cmath>
 #include <numeric>
 #include <random> 
@@ -190,6 +191,26 @@ Mat CImgPro::MedianBlur(Mat srcimg, int kernel_size)
 	medianBlur(srcimg, MedianBlurImg, kernel_size);
 
 	return MedianBlurImg;
+
+	//Mat dstimg = srcimg.clone();
+	//int numThreads = 4; // 根据你的 CPU 核心数选择线程数
+	//int rowsPerThread = srcimg.rows / numThreads;
+
+	//// 创建多个线程，并行处理不同的行段
+	//vector<thread> threads;
+	//for (int i = 0; i < numThreads; ++i) {
+	//	int startRow = i * rowsPerThread;
+	//	int endRow = (i == numThreads - 1) ? srcimg.rows : (i + 1) * rowsPerThread;
+	//	// 使用 std::bind 来绑定类成员函数和类实例
+	//	threads.push_back(thread(std::bind(&CImgPro::applyMedianBlur, this, cref(srcimg), ref(dstimg), startRow, endRow, kernel_size)));
+	//}
+
+	//// 等待所有线程完成
+	//for (auto& t : threads) {
+	//	t.join();
+	//}
+
+	//return dstimg;
 }
 
 pair<int, int> CImgPro::NZPR_to_Erosion_Dilation(float NZPR, Mat& img)
@@ -282,17 +303,23 @@ pair<Mat, vector<int>> CImgPro::EightConnectivity(Mat& img, float cof)
 
 	double sum_area = 0.0;
 	double mean_area = 0.0;
+	vector<int> area_cache(num_labels); // 缓存每个连通区域的面积
+
 	for (int i = 1; i < num_labels; i++) { // Start from 1 to skip the background
+		int area = stats.at<int>(i, CC_STAT_AREA);
+		area_cache[i] = area; // 缓存区域面积
 		sum_area += stats.at<int>(i, CC_STAT_AREA); //  Accumulate area of each connected component
 	}
 	mean_area = sum_area / (num_labels - 1); // Calculate mean area, excluding background
 
 	Mat output = Mat::zeros(labels.size(), CV_8UC1);
+	double mean_area_threshold = mean_area * cof;
+
 	for (int i = 0; i < labels.rows; i++) {
 		for (int j = 0; j < labels.cols; j++) {
 			int label = labels.at<int>(i, j); // Get label of the current pixel
 			// Check if area of the connected component containing the current pixel is greater than or equal to the mean area
-			if (label > 0 && stats.at<int>(label, CC_STAT_AREA) >= mean_area * cof) {
+			if (label > 0 && area_cache[label] >= mean_area_threshold) {
 				output.at<uchar>(i, j) = 255;
 				if (j >= 0.325 * labels.cols && j <= 0.675 * labels.cols) {//// Process region where the image does not follow normal distribution, like: 112212
 					firstHistogram[j]++;
@@ -453,60 +480,64 @@ void CImgPro::retainMainStem(vector<Cluster>& clusters)
 
 pair<Mat, float> CImgPro::OTSU(Mat src)
 {
-	int thresh = 0, PerPixSum[256] = { 0 };
-	float PerPixDis[256] = { 0 }, NonZeroPixelRatio = 0.0f;
+	//int thresh = 0, PerPixSum[256] = { 0 };
+	//float PerPixDis[256] = { 0 }, NonZeroPixelRatio = 0.0f;
 
-	//Count the quantity of each grayscale value
-	for (int i = 0; i < src.rows; i++)
-	{
-		for (int j = 0; j < src.cols; j++)
-		{
-			PerPixSum[src.at<uchar>(i, j)]++;
-		}
-	}
+	////Count the quantity of each grayscale value
+	//for (int i = 0; i < src.rows; i++)
+	//{
+	//	for (int j = 0; j < src.cols; j++)
+	//	{
+	//		PerPixSum[src.at<uchar>(i, j)]++;
+	//	}
+	//}
 
-	//Calculate the proportion of pixels for each grayscale level compared to the total number of pixels in the image
-	for (int i = 0; i < 256; i++)
-	{
-		PerPixDis[i] = (float)PerPixSum[i] / (src.rows * src.cols);
-	}
+	////Calculate the proportion of pixels for each grayscale level compared to the total number of pixels in the image
+	//for (int i = 0; i < 256; i++)
+	//{
+	//	PerPixDis[i] = (float)PerPixSum[i] / (src.rows * src.cols);
+	//}
 
-	//Iterate through all grayscale levels and calculate the threshold corresponding to the maximum between-class variance
-	float PixDis_1, PixSum_1, PixDis_2, PixSum_2, avg_1, avg_2, ICV_temp;
-	double ICV_max = 0.0;
-	for (int i = 0; i < 256; i++)
-	{
-		PixDis_1 = PixSum_1 = PixDis_2 = PixSum_2 = avg_1 = avg_2 = ICV_temp = 0;
-		//Compute the two segments resulting from threshold segmentation
-		for (int j = 0; j < 256; j++)
-		{
-			//first segment
-			if (j <= i)
-			{
-				PixDis_1 += PerPixDis[j];
-				PixSum_1 += j * PerPixDis[j];
-			}
-			//second segment
-			else
-			{
-				PixDis_2 += PerPixDis[j];
-				PixSum_2 += j * PerPixDis[j];
-			}
-		}
-		//The grayscale mean values of the two segments
-		avg_1 = PixSum_1 / PixDis_1;
-		avg_2 = PixSum_2 / PixDis_2;
-		ICV_temp = PixDis_1 * PixDis_2 * pow((avg_1 - avg_2), 2);
-		//Compare the thresholds
-		if (ICV_temp > ICV_max)
-		{
-			ICV_max = ICV_temp;
-			thresh = i;
-		}
-	}
+	////Iterate through all grayscale levels and calculate the threshold corresponding to the maximum between-class variance
+	//float PixDis_1, PixSum_1, PixDis_2, PixSum_2, avg_1, avg_2, ICV_temp;
+	//double ICV_max = 0.0;
+	//for (int i = 0; i < 256; i++)
+	//{
+	//	PixDis_1 = PixSum_1 = PixDis_2 = PixSum_2 = avg_1 = avg_2 = ICV_temp = 0;
+	//	//Compute the two segments resulting from threshold segmentation
+	//	for (int j = 0; j < 256; j++)
+	//	{
+	//		//first segment
+	//		if (j <= i)
+	//		{
+	//			PixDis_1 += PerPixDis[j];
+	//			PixSum_1 += j * PerPixDis[j];
+	//		}
+	//		//second segment
+	//		else
+	//		{
+	//			PixDis_2 += PerPixDis[j];
+	//			PixSum_2 += j * PerPixDis[j];
+	//		}
+	//	}
+	//	//The grayscale mean values of the two segments
+	//	avg_1 = PixSum_1 / PixDis_1;
+	//	avg_2 = PixSum_2 / PixDis_2;
+	//	ICV_temp = PixDis_1 * PixDis_2 * pow((avg_1 - avg_2), 2);
+	//	//Compare the thresholds
+	//	if (ICV_temp > ICV_max)
+	//	{
+	//		ICV_max = ICV_temp;
+	//		thresh = i;
+	//	}
+	//}
+	float NonZeroPixelRatio = 0.0f;
+
+	Mat OtsuImg;
+	double thresh = cv::threshold(src, OtsuImg, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
 
 	//binary
-	Mat OtsuImg(src.size(), CV_8UC1, Scalar(0));
+	Mat OtsuImgV1(src.size(), CV_8UC1, Scalar(0));
 	int nonZeroPixelCount = 0;
 	for (int i = 0; i < src.rows; i++)
 	{
@@ -515,7 +546,7 @@ pair<Mat, float> CImgPro::OTSU(Mat src)
 			//Foreground
 			if (src.at<uchar>(i, j) > 0.8 * thresh)//Lower the threshold to prevent filtering out darker green tones.
 			{
-				OtsuImg.at<uchar>(i, j) = 255;
+				OtsuImgV1.at<uchar>(i, j) = 255;
 				nonZeroPixelCount++;
 			}
 			//background
@@ -530,7 +561,7 @@ pair<Mat, float> CImgPro::OTSU(Mat src)
 	int totalPixel = src.rows * src.cols;
 	NonZeroPixelRatio = (float)nonZeroPixelCount / totalPixel;
 
-	return { OtsuImg, NonZeroPixelRatio };
+	return { OtsuImgV1, NonZeroPixelRatio };
 }
 
 Mat CImgPro::MorphologicalOperation(Mat src, int kernel_size, int cycle_num_e, int cycle_num_d)
@@ -547,7 +578,6 @@ Mat CImgPro::MorphologicalOperation(Mat src, int kernel_size, int cycle_num_e, i
 
 Mat CImgPro::ClusterPointsDrawing(Mat& src, vector<Cluster>& points)
 {
-	//Mat outimg(src.size(), CV_8UC3, Scalar(0, 0, 0));
 	Mat outimg(src.size(), CV_8UC3, Scalar(0, 0, 0));
 
 	vector<Scalar> colors = {
@@ -612,6 +642,55 @@ Mat CImgPro::ClusterPointsDrawing(Mat& src, vector<Cluster>& points)
 	line(outimg, points[0].CategID[0], Point(x1, outimg.rows), Scalar(255, 255, 255), 2, 8, 0);
 	int x2 = calculate_x(points[0].CategID[1], k6, outimg.rows);
 	line(outimg, points[0].CategID[1], Point(x2, outimg.rows), Scalar(255, 255, 255), 2, 8, 0);*/
+
+	return outimg;
+}
+
+Mat CImgPro::ClusterPoints(Mat& src, vector<Cluster>& points)
+{
+	Mat outimg(src.size(), CV_8UC3, Scalar(0, 0, 0));
+
+	vector<Scalar> colors = {
+	Scalar(0, 0, 255),     // red
+	Scalar(0, 255, 0),     // green
+	Scalar(255, 0, 0),     // blue
+	Scalar(255, 255, 0),   // yellow
+	Scalar(0, 255, 255),   // cyan
+	Scalar(255, 0, 255),   // magenta
+	Scalar(128, 0, 0),     // deep red
+	Scalar(0, 128, 0),     // dark green
+	Scalar(0, 0, 128),      // dark blue
+	Scalar(128, 128, 0),   // olive green
+	Scalar(128, 0, 128),   // purple
+	Scalar(0, 128, 128),   // turquoise
+	Scalar(0, 165, 255),   // orange
+	};
+
+	// Iterate through each set of coordinates and plot them on the image.
+	for (int i = 0; i < points.size(); i++) {
+		bool firstPoint = true;
+		int id = i + 1;
+		for (int j = 0; j < points[i].points.size(); j++) {
+			int x = points[i].points[j].x;
+			int y = points[i].points[j].y;
+
+			// Determine the brush color based on the group to which the point belongs.
+			Scalar color = colors[i % colors.size()];
+
+			// Plot the point
+			circle(outimg, Point(x, y), 1, color, -1);
+
+			//Display the group number next to the first point.
+			if (firstPoint)
+			{
+				Point textPt1(x + 20, y + 90);
+				putText(outimg, to_string(id), textPt1, FONT_HERSHEY_SIMPLEX, 1, color, 3);
+				firstPoint = false;
+			}
+		}
+
+	}
+
 
 	return outimg;
 }
@@ -705,45 +784,49 @@ void CImgPro::RANSAC(Cluster& cluster, float thresh, Mat& outimg)
 	//Hough_Line(inliers, outimg);
 }
 
-vector<CImgPro::Cluster> CImgPro::firstClusterBaseOnDbscan(Cluster& points, float epsilon, int minPts)
+vector<CImgPro::Cluster> CImgPro::KDTreeAcceleratedDBSCAN(Cluster& points, float epsilon, int minPts)
 {
-	vector<int> clusterIDs(points.points.size(), -1); // Initialize the cluster labels for all points as -1, indicating noise points
+	vector<int> clusterIDs(points.points.size(), -1); // Initialize all points as unclassified (-1)
 	int currentClusterID = 0;
+	unordered_map<int, vector<int>> cachedNeighbours; // 用于缓存邻居查询结果
 
+	auto start1 = std::chrono::high_resolution_clock::now();
 
+	buildKDTree(points, epsilon, cachedNeighbours);  // 使用 KD-tree 进行邻居查找
 
-
+	auto end1 = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed1 = end1 - start1;
+	
 	for (int i = 0; i < points.points.size(); ++i) {
-		if (clusterIDs[i] == -1) { // unclassified
-			Point& p = points.points[i];
-			vector<int> neighbours = regionQuery(points, p, epsilon);
-			if (neighbours.size() >= minPts) {
-				expandCluster(points, clusterIDs, currentClusterID, i, epsilon, minPts, neighbours);
+		if (clusterIDs[i] == -1) { // 如果该点未分类
+			vector<int> neighbours = cachedNeighbours[i]; // 直接获取缓存的邻居信息
+
+			if (neighbours.size() >= minPts) { // 如果该点是核心点
+				expandCluster(points, clusterIDs, currentClusterID, i, epsilon, neighbours, cachedNeighbours);
 				currentClusterID++;
 			}
 		}
-
-
 	}
 
+
+	// 构建簇
 	vector<Cluster> cluster_points(currentClusterID);
 	for (int i = 0; i < points.points.size(); ++i) {
-		int clusterID = clusterIDs[i]; // current point ID
-		if (clusterID >= 0) { // remove noise��ID=-1��
+		int clusterID = clusterIDs[i];
+		if (clusterID != -1) { // 将非噪声点加入对应的簇
 			cluster_points[clusterID].points.push_back(Point(points.points[i].x, points.points[i].y));
 		}
 	}
 
+	// 计算每个簇的质心
 	for (Cluster& cluster : cluster_points) {
 		if (!cluster.points.empty()) {
-			// calculate centroid
 			for (Point& point : cluster.points) {
 				cluster.averageX += point.x;
 				cluster.averageY += point.y;
 			}
 			cluster.averageX /= cluster.points.size();
 			cluster.averageY /= cluster.points.size();
-
 		}
 	}
 
@@ -849,6 +932,7 @@ vector<CImgPro::Cluster> CImgPro::secondClusterBaseOnCenterX(vector<Cluster>& cl
 vector<int> CImgPro::regionQuery(Cluster& points, Point& point, double epsilon)
 {
 	vector<int> neighbours;
+
 	for (int i = 0; i < points.points.size(); ++i) {
 		Point& p = points.points[i];
 		if (euclidean_distance(point, p) <= epsilon) {
@@ -858,19 +942,59 @@ vector<int> CImgPro::regionQuery(Cluster& points, Point& point, double epsilon)
 	return neighbours;
 }
 
+void CImgPro::buildKDTree(Cluster& points, float epsilon, unordered_map<int, vector<int>>& cachedNeighbours) {
+	// 创建一个用于存储所有点的 cv::Mat
+	cv::Mat data(points.points.size(), 2, CV_32F);  // 2 表示每个点有两个坐标 (x, y)
+
+	// 将每个点的坐标转换为 Mat 格式
+	for (int i = 0; i < points.points.size(); ++i) {
+		data.at<float>(i, 0) = static_cast<float>(points.points[i].x);
+		data.at<float>(i, 1) = static_cast<float>(points.points[i].y);
+	}
+
+	// 使用 KD-tree 进行邻居查找
+	cv::flann::KDTreeIndexParams indexParams;
+	cv::flann::Index kdtree(data, indexParams);  // 构建 KD-tree
+
+	// 遍历每个点，查询邻居
+	for (int i = 0; i < points.points.size(); ++i) {
+		std::vector<float> query = { static_cast<float>(points.points[i].x), static_cast<float>(points.points[i].y) };
+		std::vector<int> neighbours(20);   // 初始化大小为 20
+		std::vector<float> dists(20);      // 初始化大小为 20
+
+		// 使用 KD-tree 进行邻居查找，传递正确的 SearchParams 对象
+		int foundNeighbours = kdtree.radiusSearch(query, neighbours, dists, epsilon, neighbours.size(), cv::flann::SearchParams(-1, 0.0f, false));
+
+		// 调整 neighbours 和 dists 容器的大小，只保留实际找到的邻居
+		if (foundNeighbours > 1) {
+			neighbours.resize(foundNeighbours);  // 调整邻居向量大小为实际找到的邻居数
+			dists.resize(foundNeighbours);      // 调整距离向量大小
+		}
+		else {
+			neighbours.clear();  // 如果没有找到邻居，则清空该向量
+		}
+
+		// 存储邻居到缓存中
+		cachedNeighbours[i] = neighbours;
+	}
+}
+
 void CImgPro::expandCluster(Cluster& points, vector<int>& clusterIDs, int currentClusterID,
-	int pointIndex, double epsilon, int minPts, const vector<int>& neighbours)
+	int pointIndex, double epsilon, const vector<int>& neighbours, unordered_map<int, vector<int>>& cachedNeighbours)
 {
 	std::queue<int> processQueue;
 	processQueue.push(pointIndex);
 	clusterIDs[pointIndex] = currentClusterID; // Mark the current point as the current cluster ID
 
+
 	while (!processQueue.empty()) {
 		int currentIndex = processQueue.front();
 		processQueue.pop();
-		Point& p = points.points[currentIndex];
-		vector<int> newNeighbours = regionQuery(points, p, epsilon); // Neighborhood query of density-connected points
-		if (newNeighbours.size() >= minPts) { // Number of samples in the neighborhood of density-connected points is greater than or equal to minPts
+
+		// 直接从缓存中获取邻居
+		vector<int> newNeighbours = cachedNeighbours[currentIndex];
+
+		if (newNeighbours.size() > 1) { // Number of samples in the neighborhood of density-connected points is greater than or equal to minPts
 			for (int i : newNeighbours) {
 				if (clusterIDs[i] == -1) { // Unclassified
 					clusterIDs[i] = currentClusterID; // Mark density-connected points as the current cluster ID
@@ -944,5 +1068,79 @@ void CImgPro::leastSquaresFit_edit(Cluster& cluster, Mat& outimg)
 
 	float firstSlope = (float)-a / b;
 	//}
+}
+
+void CImgPro::SaveImg(Mat& img)
+{
+	// 获取用户桌面路径
+	char* homePath = std::getenv("USERPROFILE");  // 获取用户主目录
+	if (!homePath) {
+		std::cerr << "无法获取用户主目录路径。" << std::endl;
+		return;
+	}
+	std::string desktopPath = std::string(homePath) + "\\Desktop\\";  // 拼接到桌面路径
+
+	// 设置带有路径和扩展名的输出文件名
+	std::string outfilename = desktopPath + "output_image3.jpg";
+
+	// 保存图片
+	bool success = cv::imwrite(outfilename, img);
+}
+
+void CImgPro::saveProcessingTimes(int newTime, const std::string& filename)
+{
+	std::vector<int> times;
+
+	// Step 1: 读取已有的处理时间数据（如果存在）
+	std::ifstream infile(filename);
+	if (infile.is_open()) {
+		std::string line;
+		while (std::getline(infile, line)) {
+			// 跳过分隔符和 "平均时间" 行
+			if (line.find("--END OF BATCH--") != std::string::npos || line.find("平均时间") != std::string::npos) {
+				continue;  // 跳过这行
+			}
+
+			// 分割每个处理时间数据
+			std::stringstream ss(line);
+			std::string item;
+			while (std::getline(ss, item, '+')) {
+				int time = std::stoi(item);  // 将字符串转换为整数
+				times.push_back(time);
+			}
+		}
+		infile.close();
+	}
+
+	// Step 2: 追加新的处理时间
+	times.push_back(newTime);
+
+	// Step 3: 打开文件以追加方式写入
+	std::ofstream outfile(filename, std::ios::app);  // 使用 std::ios::app 以追加模式打开文件
+	if (!outfile.is_open()) {
+		std::cerr << "无法打开文件进行写入: " << filename << std::endl;
+		return;
+	}
+
+	// Step 4: 记录新添加的时间
+	outfile << newTime;
+
+	// 添加 "+" 号，除非是20个数据的结束
+	if (times.size() % 20 != 0) {
+		outfile << "+";
+	}
+
+	// Step 5: 如果已经完成了20张图片，计算并写入平均时间
+	if (times.size() % 20 == 0) {
+		int startIdx = times.size() - 20;  // 只取最近20个数据的起始位置
+		int sum = std::accumulate(times.begin() + startIdx, times.end(), 0);
+		double average = static_cast<double>(sum) / 20;
+
+		// 插入分隔符和平均时间
+		outfile << "\n--END OF BATCH--\n";
+		outfile << "\n平均时间: " << average << " ms\n";
+	}
+
+	outfile.close();  // 关闭文件
 }
 

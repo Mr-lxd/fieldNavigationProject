@@ -4,10 +4,14 @@
 #include "opencv2/highgui/highgui.hpp"
 #include <opencv2/opencv.hpp>
 #include <math.h>
+#include <opencv2/flann.hpp>
+
+
 
 
 using namespace std;
 using namespace cv;
+
 
 class CImgPro
 {
@@ -31,18 +35,20 @@ public:
 	Mat verticalProjection(Mat& img, const vector<Cluster>& clusters, double cof);
 	Mat MorphologicalOperation(Mat src, int kernel_size, int cycle_num_e, int cycle_num_d);
 	Mat ClusterPointsDrawing(Mat& src, vector<Cluster>& points);
+	Mat ClusterPoints(Mat& src, vector<Cluster>& points);
 	pair<Mat, int> verticalProjectionForCenterX(const vector<int>& histogram);
 	pair<Mat, vector<int>> EightConnectivity(Mat& img, float cof);
 	pair<Mat, float> OTSU(Mat src);
 	pair<int, int>NZPR_to_Erosion_Dilation(float NZPR, Mat& img);
-	vector<Cluster> firstClusterBaseOnDbscan(Cluster& points, float epsilon, int minPts);
+	vector<Cluster> KDTreeAcceleratedDBSCAN(Cluster& points, float epsilon, int minPts);
 	vector<Cluster> secondClusterBaseOnCenterX(vector<Cluster>& cluster_points, int imgCenterX, float cof);
 	void processImageWithWindow(Mat& srcimg, Mat& outimg, Cluster& points, int windowWidth, int windowHeight, int flag);
 	void retainMainStem(vector<Cluster>& clusters);
 	void NormalizedExG(Mat& srcimg, Mat& outimg);
 	void RANSAC(Cluster& points, float thresh, Mat& outimg);
-	void leastSquaresFit_edit(Cluster& cluster, Mat& outimg);;
-
+	void leastSquaresFit_edit(Cluster& cluster, Mat& outimg);
+	void SaveImg(Mat& img);
+	void saveProcessingTimes(int newTime, const std::string& filename);
 
 private:
 
@@ -60,8 +66,9 @@ private:
 	vector<Cluster> ComparePoints(vector<Cluster>& points);
 	vector<int> regionQuery(Cluster& points, Point& point, double epsilon);
 	void expandCluster(Cluster& points, vector<int>& clusterIDs, int currentClusterID,
-		int pointIndex, double epsilon, int minPts, const vector<int>& neighbours);
+		int pointIndex, double epsilon, const vector<int>& neighbours, unordered_map<int, vector<int>>& cachedNeighbours);
 	vector<Cluster> BaseCluster(Mat featureimage, int beginHeight, int areaHeight, int areaWidth);
+	void buildKDTree(Cluster& points, float epsilon, unordered_map<int, vector<int>>& cachedNeighbours);
 
 };
 

@@ -31,7 +31,7 @@ fieldNavigationProject::fieldNavigationProject(QWidget* parent)
 	// add resolution
 	ui.resolutionComboBox->addItem("640*480");
 	ui.resolutionComboBox->addItem("1920*1080");
-
+	ui.resolutionComboBox->addItem("4096*3072");
 
 
 	connect(ui.resolutionComboBox, SIGNAL(currentIndexChanged(int)),
@@ -118,25 +118,35 @@ QImage fieldNavigationProject::processImage(cv::String& filename, cv::Size& targ
 	CImgPro myImgPro;
 
 	Mat ExGImage(resizedImage.size(), CV_8UC1);
+
+	auto start1 = std::chrono::high_resolution_clock::now();
 	myImgPro.NormalizedExG(resizedImage, ExGImage);
+	auto end1 = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed1 = end1 - start1;
 
 	/*
 		Median filtering is more effective than Gaussian filtering in dealing with salt-and-pepper noise
 	*/
-	int MedianBlur_kernel_size = 5;
+
+	/*auto start11 = std::chrono::high_resolution_clock::now();
+	int MedianBlur_kernel_size = 3;
 	Mat MedianBlurImg;
 	MedianBlurImg = myImgPro.MedianBlur(ExGImage, MedianBlur_kernel_size);
+	auto end11 = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed11 = end11 - start11;*/
 
-
-	auto result_OTSU = myImgPro.OTSU(MedianBlurImg);
+	auto start12 = std::chrono::high_resolution_clock::now();
+	auto result_OTSU = myImgPro.OTSU(ExGImage);
 	Mat temp = result_OTSU.first;
 	Mat OtsuImg = temp.clone();
 	NonZeroPixelRatio = result_OTSU.second;
-
+	auto end12 = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed12 = end12 - start12;
 
 	/*
 		Morphological operations are helpful for eliminating weeds and side branches, but also reduce crop details
 	*/
+	auto start13 = std::chrono::high_resolution_clock::now();
 	Mat MorphImg;
 	int flag2 = 0;
 	auto result_open = myImgPro.NZPR_to_Erosion_Dilation(NonZeroPixelRatio, resizedImage);
@@ -144,78 +154,103 @@ QImage fieldNavigationProject::processImage(cv::String& filename, cv::Size& targ
 		MorphImg = myImgPro.MorphologicalOperation(OtsuImg, 3, result_open.first, result_open.second);
 		flag2 = 1;
 	}
+	auto end13 = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed13 = end13 - start13;
 
 
 	/*
 		The eight-connected algorithm can be employed to further eliminate noise and minor connected components
 	*/
+	auto start14 = std::chrono::high_resolution_clock::now();
 	pair<Mat, vector<int>> result_EC = myImgPro.EightConnectivity(flag2 == 1 ? MorphImg : OtsuImg, 0.7);
 	Mat ConnectImg = result_EC.first;
+	auto end14 = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed14 = end14 - start14;
 
 
 	//Calculate the x-coordinate of the center row baseline within the crop based on the histogram analysis
+	auto start15 = std::chrono::high_resolution_clock::now();
 	auto result_VPFCX = myImgPro.verticalProjectionForCenterX(result_EC.second);
 	Mat firstHistorImg = result_VPFCX.first;
 	int centerX = result_VPFCX.second;//baseline
+	auto end15 = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed15 = end15 - start15;
 
 
 	/*
 		Using windows to extract features points, reducing data size
 	*/
+	auto start16 = std::chrono::high_resolution_clock::now();
 	CImgPro::Cluster reduce_points;
 	Mat featureImg(ConnectImg.size(), CV_8UC1, Scalar(0));
 	myImgPro.processImageWithWindow(ConnectImg, featureImg, reduce_points, 8, 8, 1);
+	auto end16 = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed16 = end16 - start16;
 
 
 	/*
 		Density clustering-based
 	*/
-	float epsilon;
-	int minPts;
-	if (resizedImage.rows == 480 && resizedImage.cols == 640)
-	{
-		epsilon = 20;//30
-		minPts = 5;//10
-	}
-	if (resizedImage.rows == 1080 && resizedImage.cols == 1920)
-	{
-		epsilon = 25;//20
-		minPts = 10;// 15
-	}
-	if (resizedImage.rows == 3072 && resizedImage.cols == 4096)
-	{
-		epsilon = 110;
-		minPts = 50;
-	}
-	vector<CImgPro::Cluster> first_cluster_points = myImgPro.firstClusterBaseOnDbscan(reduce_points, epsilon, minPts);
-	float cof = 0.65;//0.4
+	float epsilon = 200;
+	int minPts = 4;
+	//map<pair<int, int>, pair<float, int>> params{
+	//		{{480, 640}, {150, 4}},
+	//		{{1080, 1920}, {150, 4}},
+	//		{{3072, 4096}, {110, 50}}
+	//};
+	//auto it = params.find({ CImgPro::imgCols, CImgPro::imgRows });
+	//if (it != params.end()) {
+	//	epsilon = it->second.first;
+	//	minPts = it->second.second;
+	//}
+	auto start161 = std::chrono::high_resolution_clock::now();
+	vector<CImgPro::Cluster> first_cluster_points = myImgPro.KDTreeAcceleratedDBSCAN(reduce_points, epsilon, minPts);
+	auto end161 = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed161 = end161 - start161;
+
+
+	auto start17 = std::chrono::high_resolution_clock::now();
+	float cof = 0.65;//1
 	vector<CImgPro::Cluster> second_cluster_points;
 	do
 	{
 		second_cluster_points = myImgPro.secondClusterBaseOnCenterX(first_cluster_points, centerX, cof);
 		cof += 0.05;
 	} while (second_cluster_points.size() == 0);
-	Mat F_ClusterImg = myImgPro.ClusterPointsDrawing(ExGImage, first_cluster_points);
-	Mat S_ClusterImg = myImgPro.ClusterPointsDrawing(ExGImage, second_cluster_points);
+	auto end17 = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed17 = end17 - start17;
+
+	//Mat F_ClusterImg = myImgPro.ClusterPointsDrawing(ExGImage, first_cluster_points);
+	//myImgPro.SaveImg(F_ClusterImg);
+	//Mat S_ClusterImg = myImgPro.ClusterPointsDrawing(ExGImage, second_cluster_points);
 
 
+	auto start18 = std::chrono::high_resolution_clock::now();
 	//Thresholding segmentation of images
 	Mat HistogramImg;
 	double tsd = myImgPro.thresholdingSigmoid(NonZeroPixelRatio, -8.67, 0.354);//0.1-0.9  0.4-0.4
 	//double tsd = myImgPro.thresholdingSigmoid(CImgPro::NonZeroPixelRatio, -4.977, 0.3185);//0.04-0.8  0.4-0.4
-	HistogramImg = myImgPro.verticalProjection(S_ClusterImg, second_cluster_points, tsd);
+	HistogramImg = myImgPro.verticalProjection(resizedImage, second_cluster_points, tsd);
 	myImgPro.retainMainStem(second_cluster_points);
+	auto end18 = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed18 = end18 - start18;
+
 	Mat MainStemImg = myImgPro.ClusterPointsDrawing(ExGImage, second_cluster_points);
 
 
+
+	auto start19 = std::chrono::high_resolution_clock::now();
 	/*
 		Second extraction
 	*/
 	CImgPro::Cluster final_points;
 	Mat ExtractImg(MainStemImg.size(), CV_8UC3, Scalar(255, 255, 255));
 	myImgPro.processImageWithWindow(MainStemImg, ExtractImg, final_points, 16, 32, 2);
+	auto end19 = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed19 = end19 - start19;
 
 
+	auto start20 = std::chrono::high_resolution_clock::now();
 	/*
 		fit line
 	*/
@@ -228,12 +263,18 @@ QImage fieldNavigationProject::processImage(cv::String& filename, cv::Size& targ
 	{
 		myImgPro.RANSAC(final_points, 0.13, RansacImg);
 	}
+	auto end20 = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed20 = end20 - start20;
 
 	// cv::Mat convert to QImage
 	QImage qimg(RansacImg.data, RansacImg.cols, RansacImg.rows, RansacImg.step, QImage::Format_RGB888);
 
 	auto end = std::chrono::high_resolution_clock::now();
 	processingDuration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+	/*string timefilename = string(std::getenv("USERPROFILE")) + "\\Desktop\\processing_times.txt";
+	int processingTime = processingDuration.count();
+	myImgPro.saveProcessingTimes(processingTime, timefilename);*/
 
 	return qimg.rgbSwapped();
 }
