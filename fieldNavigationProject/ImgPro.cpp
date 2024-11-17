@@ -5,6 +5,7 @@
 #include <numeric>
 #include <random> 
 #include<opencv2/imgproc/types_c.h>
+#include <omp.h>
 
 
 int CImgPro::imgCols = -1, CImgPro::imgRows = -1;
@@ -17,6 +18,7 @@ void CImgPro::NormalizedExG(Mat& srcimg, Mat& outimg)
 	unsigned char R, G, B;
 	uchar temp1;
 	float r, g, b;		// The normalized difference vegetation index
+
 	for (int i = 0; i < srcimg.rows; i++)
 	{
 		//Obtain the base address of the data located in the i-th row, and retrieve the pointers to the input and output image data of the current row
@@ -29,9 +31,12 @@ void CImgPro::NormalizedExG(Mat& srcimg, Mat& outimg)
 			B = in[3 * j];
 			G = in[3 * j + 1];
 			R = in[3 * j + 2];
-			b = (float)B / (B + G + R);
-			g = (float)G / (B + G + R);
-			r = (float)R / (B + G + R);
+
+			float sumRGB = (float)(R + G + B);
+
+			b = (float)B / sumRGB;
+			g = (float)G / sumRGB;
+			r = (float)R / sumRGB;
 
 			if (2 * g - r - b < 0)
 				temp1 = 0;
@@ -68,20 +73,12 @@ float CImgPro::euclidean_distance(Point a, Point b)
 
 float CImgPro::calculateNonZeroPixelRatio(Mat& img)
 {
-	int nonZeroPixelCount = 0;
+
+	int nonZeroPixelCount = cv::countNonZero(img);
 	int totalPixelCount = img.rows * img.cols;
-
-	for (int i = 0; i < img.rows; ++i) {
-		for (int j = 0; j < img.cols; ++j) {
-			if (img.at<uchar>(i, j) != 0) {
-				nonZeroPixelCount++;
-			}
-		}
-	}
-
-	// NonZeroPixelRatio
 	float ratio = (float)nonZeroPixelCount / totalPixelCount;
 	return ratio;
+
 }
 
 double CImgPro::thresholdingSigmoid(double NonZeroPixelRatio, double k, double x)
@@ -308,23 +305,43 @@ pair<Mat, vector<int>> CImgPro::EightConnectivity(Mat& img, float cof)
 	for (int i = 1; i < num_labels; i++) { // Start from 1 to skip the background
 		int area = stats.at<int>(i, CC_STAT_AREA);
 		area_cache[i] = area; // 缓存区域面积
-		sum_area += stats.at<int>(i, CC_STAT_AREA); //  Accumulate area of each connected component
+		sum_area += area; //  Accumulate area of each connected component
 	}
 	mean_area = sum_area / (num_labels - 1); // Calculate mean area, excluding background
 
 	Mat output = Mat::zeros(labels.size(), CV_8UC1);
 	double mean_area_threshold = mean_area * cof;
 
+	//auto start1 = std::chrono::high_resolution_clock::now();
+	//for (int i = 0; i < labels.rows; i++) {
+	//	for (int j = 0; j < labels.cols; j++) {
+	//		int label = labels.at<int>(i, j); // Get label of the current pixel
+	//		// Check if area of the connected component containing the current pixel is greater than or equal to the mean area
+	//		if (label > 0 && area_cache[label] >= mean_area_threshold) {
+	//			output.at<uchar>(i, j) = 255;
+	//			if (j >= 0.325 * labels.cols && j <= 0.675 * labels.cols) {//// Process region where the image does not follow normal distribution, like: 112212
+	//				firstHistogram[j]++;
+	//			}
+
+	//		}
+	//	}
+	//}
+	//auto end1 = std::chrono::high_resolution_clock::now();
+	//std::chrono::duration<double> elapsed1 = end1 - start1;
+
+
+	// ptr is more fast than at
+	int* labels_ptr = labels.ptr<int>();
+	uchar* output_ptr = output.ptr<uchar>();
 	for (int i = 0; i < labels.rows; i++) {
 		for (int j = 0; j < labels.cols; j++) {
-			int label = labels.at<int>(i, j); // Get label of the current pixel
+			int label = labels_ptr[i * labels.cols + j]; // Get label of the current pixel
 			// Check if area of the connected component containing the current pixel is greater than or equal to the mean area
 			if (label > 0 && area_cache[label] >= mean_area_threshold) {
-				output.at<uchar>(i, j) = 255;
-				if (j >= 0.325 * labels.cols && j <= 0.675 * labels.cols) {//// Process region where the image does not follow normal distribution, like: 112212
+				output_ptr[i * output.cols + j] = 255;
+				if (j >= 0.325 * labels.cols && j <= 0.675 * labels.cols) {
 					firstHistogram[j]++;
 				}
-
 			}
 		}
 	}
@@ -337,58 +354,130 @@ void CImgPro::processImageWithWindow(Mat& srcimg, Mat& outimg, Cluster& points, 
 	int rows = srcimg.rows;
 	int cols = srcimg.cols;
 
+	// Pointer-based access to image data
+	uchar* src_data = srcimg.ptr<uchar>();
+	uchar* out_data = outimg.ptr<uchar>();
+
+	// Check if the input image is single channel or 3 channels
+	bool is_single_channel = (srcimg.channels() == 1);
+	bool is_three_channel = (srcimg.channels() == 3);
+
+	//auto start1 = std::chrono::high_resolution_clock::now();
+	//for (int y = 0; y <= rows - windowHeight; y += windowHeight)
+	//{
+	//	for (int x = 0; x <= cols - windowWidth; x += windowWidth)
+	//	{
+	//		// Calculate the average value of pixel coordinates within the window
+	//		int count = 0;
+	//		int sumX = 0.0, sumY = 0.0;
+	//		float avgX = 0.0, avgY = 0.0;
+	//		for (int wy = 0; wy < windowHeight; ++wy)
+	//		{
+	//			for (int wx = 0; wx < windowWidth; ++wx)
+	//			{
+	//				if (srcimg.channels() == 1) {
+	//					if (srcimg.at<uchar>(y + wy, x + wx) != 0)
+	//					{
+	//						sumY += y + wy;
+	//						sumX += x + wx;
+	//						count++;
+	//						//img.at<uchar>(y + wy, x + wx) = 0;
+	//					}
+	//				}
+	//				if (srcimg.channels() == 3) {
+	//					if (srcimg.at<Vec3b>(y + wy, x + wx) != Vec3b(0, 0, 0))
+	//					{
+	//						sumY += y + wy;
+	//						sumX += x + wx;
+	//						count++;
+	//					}
+	//				}
+	//			}
+	//		}
+
+	//		if (sumX != 0 || sumY != 0)
+	//		{
+	//			avgX = (float)sumX / count;
+	//			avgY = (float)sumY / count;
+	//			if (flag == 1) {
+	//				outimg.at<uchar>(avgY, avgX) = 255;
+
+	//			}
+	//			if (flag == 2)
+	//			{
+	//				outimg.at<Vec3b>(avgY, avgX) = Vec3b(0, 0, 0);
+	//			}
+
+	//			points.points.push_back(Point(avgX, avgY));
+	//		}
+	//	}
+	//}
+	//auto end1 = std::chrono::high_resolution_clock::now();
+	//std::chrono::duration<double> elapsed1 = end1 - start1;
+
+
+	// Iterate over windows in the image
 	for (int y = 0; y <= rows - windowHeight; y += windowHeight)
 	{
 		for (int x = 0; x <= cols - windowWidth; x += windowWidth)
 		{
-			// Calculate the average value of pixel coordinates within the window
+			// Calculate the sum of coordinates inside the window
 			int count = 0;
-			int sumX = 0.0, sumY = 0.0;
-			float avgX = 0.0, avgY = 0.0;
+			int sumX = 0, sumY = 0;
 			for (int wy = 0; wy < windowHeight; ++wy)
 			{
 				for (int wx = 0; wx < windowWidth; ++wx)
 				{
-					if (srcimg.channels() == 1) {
-						if (srcimg.at<uchar>(y + wy, x + wx) != 0)
+					int idx = (y + wy) * cols + (x + wx);  // Index into the image data
+					if (is_single_channel)
+					{
+						if (src_data[idx] != 0)  // If pixel is non-zero in a single-channel image
 						{
-							sumY += y + wy;
-							sumX += x + wx;
+							sumY += (y + wy);
+							sumX += (x + wx);
 							count++;
-							//img.at<uchar>(y + wy, x + wx) = 0;
 						}
 					}
-					if (srcimg.channels() == 3) {
-						if (srcimg.at<Vec3b>(y + wy, x + wx) != Vec3b(0, 0, 0))
+					else if (is_three_channel)
+					{
+						Vec3b* pixel = (Vec3b*)(src_data + idx * 3);
+						if (pixel->val[0] != 0 || pixel->val[1] != 0 || pixel->val[2] != 0)  // If pixel is non-zero in a 3-channel image
 						{
-							sumY += y + wy;
-							sumX += x + wx;
+							sumY += (y + wy);
+							sumX += (x + wx);
 							count++;
 						}
 					}
 				}
 			}
 
-			if (sumX != 0 || sumY != 0)
+			// If the window has non-zero pixels, calculate the average coordinates
+			if (count > 0)
 			{
-				avgX = (float)sumX / count;
-				avgY = (float)sumY / count;
-				if (flag == 1) {
-					outimg.at<uchar>(avgY, avgX) = 255;
+				float avgX = (float)sumX / count;
+				float avgY = (float)sumY / count;
 
-				}
-				if (flag == 2)
+				// Set the value of the output image based on the flag
+				if (flag == 1)
 				{
-					outimg.at<Vec3b>(avgY, avgX) = Vec3b(0, 0, 0);
+					// Assuming outimg is a single-channel image
+					out_data[(int(avgY) * cols) + int(avgX)] = 255;
+				}
+				else if (flag == 2)
+				{
+					// Assuming outimg is a 3-channel image
+					Vec3b* pixel = (Vec3b*)(out_data + (int(avgY) * cols + int(avgX)) * 3);
+					*pixel = Vec3b(0, 0, 0);  // Set to black
 				}
 
+				// Store the point coordinates in the cluster
 				points.points.push_back(Point(avgX, avgY));
 			}
 		}
 	}
 }
 
-Mat CImgPro::verticalProjection(Mat& img, const vector<Cluster>& clusters, double cof)
+void CImgPro::verticalProjection(Mat& img, const vector<Cluster>& clusters, double cof)
 {
 	vector<int> histogram(img.cols, 0);
 
@@ -398,27 +487,22 @@ Mat CImgPro::verticalProjection(Mat& img, const vector<Cluster>& clusters, doubl
 		}
 	}
 
-	int y_max = histogram[0];
-	for (auto& y : histogram) {
-		if (y > y_max) {
-			y_max = y;
-		}
-	}
+	// Find the maximum value in the histogram
+	int y_max = *std::max_element(histogram.begin(), histogram.end());
 
-
-	Size size(img.cols, 1.2 * y_max);
-	Mat histogramImg(size, CV_8UC1, Scalar(0));
-	for (int i = 0; i < histogram.size(); i++) {
-		// Draw the histogram line
-		line(histogramImg, Point(i, 1.2 * y_max), Point(i, 1.2 * y_max - histogram[i]), Scalar(255), 1);
-	}
+	//Size size(img.cols, 1.2 * y_max);
+	//Mat histogramImg(size, CV_8UC1, Scalar(0));
+	//for (int i = 0; i < histogram.size(); i++) {
+	//	// Draw the histogram line
+	//	line(histogramImg, Point(i, 1.2 * y_max), Point(i, 1.2 * y_max - histogram[i]), Scalar(255), 1);
+	//}
 
 	// Draw a horizontal line for thresholding
 	int horizontal_line_height = cof * y_max;
 	//line(histogramImg, Point(0, horizontal_line_height), Point(histogramImg.cols - 1, horizontal_line_height), Scalar(255), 1);
 
 	// Find the x-coordinate of the intersection between the histogram and the horizontal line
-	bool flag = true;
+	/*bool flag = true;
 	x_max = -1, x_min = histogramImg.cols + 1;
 	for (int i = 0; i < histogram.size(); i++) {
 		if (histogramImg.at<uchar>(horizontal_line_height, i) == 255) {
@@ -430,14 +514,26 @@ Mat CImgPro::verticalProjection(Mat& img, const vector<Cluster>& clusters, doubl
 				x_max = i;
 			}
 		}
-	}
-	int x1 = x_min;
-	int x2 = x_max;
+	}*/
 
-	return histogramImg;
+	x_min = -1, x_max = -1;
+
+	//Scan the histogram to find the min and max x coordinates that cross the threshold
+	bool flag = true;
+	for (int i = 0; i < histogram.size(); i++) {
+		if (histogram[i] >= 1.2 * y_max - horizontal_line_height) {
+			if (flag) {
+				x_min = i; // First occurrence of the threshold crossing
+				flag = false;
+			}
+			x_max = i; // Update max x value as we go through the histogram
+		}
+	}
+
+	//return histogramImg;
 }
 
-pair<Mat, int> CImgPro::verticalProjectionForCenterX(const vector<int>& histogram)
+int CImgPro::verticalProjectionForCenterX(const vector<int>& histogram)
 {
 	int y_max = -1, centerX = -1;
 	for (int i = 0; i < histogram.size(); i++)
@@ -449,15 +545,17 @@ pair<Mat, int> CImgPro::verticalProjectionForCenterX(const vector<int>& histogra
 	}
 
 
-	Size size(histogram.size(), 1.2 * y_max);
-	Mat histogramImg(size, CV_8UC1, Scalar(0));
-	for (int i = 0; i < histogram.size(); i++) {
-		// Draw the histogram line
-		line(histogramImg, Point(i, 1.2 * y_max), Point(i, 1.2 * y_max - histogram[i]), Scalar(255), 1);
-	}
+	//Size size(histogram.size(), 1.2 * y_max);
+	//Mat histogramImg(size, CV_8UC1, Scalar(0));
+	//for (int i = 0; i < histogram.size(); i++) {
+	//	// Draw the histogram line
+	//	line(histogramImg, Point(i, 1.2 * y_max), Point(i, 1.2 * y_max - histogram[i]), Scalar(255), 1);
+	//}
 
 
-	return { histogramImg, centerX };
+	//return { histogramImg, centerX };
+
+	return centerX;
 }
 
 void CImgPro::retainMainStem(vector<Cluster>& clusters)
@@ -480,80 +578,49 @@ void CImgPro::retainMainStem(vector<Cluster>& clusters)
 
 pair<Mat, float> CImgPro::OTSU(Mat src)
 {
-	//int thresh = 0, PerPixSum[256] = { 0 };
-	//float PerPixDis[256] = { 0 }, NonZeroPixelRatio = 0.0f;
-
-	////Count the quantity of each grayscale value
-	//for (int i = 0; i < src.rows; i++)
-	//{
-	//	for (int j = 0; j < src.cols; j++)
-	//	{
-	//		PerPixSum[src.at<uchar>(i, j)]++;
-	//	}
-	//}
-
-	////Calculate the proportion of pixels for each grayscale level compared to the total number of pixels in the image
-	//for (int i = 0; i < 256; i++)
-	//{
-	//	PerPixDis[i] = (float)PerPixSum[i] / (src.rows * src.cols);
-	//}
-
-	////Iterate through all grayscale levels and calculate the threshold corresponding to the maximum between-class variance
-	//float PixDis_1, PixSum_1, PixDis_2, PixSum_2, avg_1, avg_2, ICV_temp;
-	//double ICV_max = 0.0;
-	//for (int i = 0; i < 256; i++)
-	//{
-	//	PixDis_1 = PixSum_1 = PixDis_2 = PixSum_2 = avg_1 = avg_2 = ICV_temp = 0;
-	//	//Compute the two segments resulting from threshold segmentation
-	//	for (int j = 0; j < 256; j++)
-	//	{
-	//		//first segment
-	//		if (j <= i)
-	//		{
-	//			PixDis_1 += PerPixDis[j];
-	//			PixSum_1 += j * PerPixDis[j];
-	//		}
-	//		//second segment
-	//		else
-	//		{
-	//			PixDis_2 += PerPixDis[j];
-	//			PixSum_2 += j * PerPixDis[j];
-	//		}
-	//	}
-	//	//The grayscale mean values of the two segments
-	//	avg_1 = PixSum_1 / PixDis_1;
-	//	avg_2 = PixSum_2 / PixDis_2;
-	//	ICV_temp = PixDis_1 * PixDis_2 * pow((avg_1 - avg_2), 2);
-	//	//Compare the thresholds
-	//	if (ICV_temp > ICV_max)
-	//	{
-	//		ICV_max = ICV_temp;
-	//		thresh = i;
-	//	}
-	//}
 	float NonZeroPixelRatio = 0.0f;
 
 	Mat OtsuImg;
 	double thresh = cv::threshold(src, OtsuImg, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
 
 	//binary
-	Mat OtsuImgV1(src.size(), CV_8UC1, Scalar(0));
+	//Mat OtsuImgV1(src.size(), CV_8UC1, Scalar(0));
 	int nonZeroPixelCount = 0;
-	for (int i = 0; i < src.rows; i++)
-	{
-		for (int j = 0; j < src.cols; j++)
-		{
-			//Foreground
-			if (src.at<uchar>(i, j) > 0.8 * thresh)//Lower the threshold to prevent filtering out darker green tones.
-			{
-				OtsuImgV1.at<uchar>(i, j) = 255;
+
+	//auto start16 = std::chrono::high_resolution_clock::now();
+	//for (int i = 0; i < src.rows; i++)
+	//{
+	//	for (int j = 0; j < src.cols; j++)
+	//	{
+	//		//Foreground
+	//		if (src.at<uchar>(i, j) > 0.8 * thresh)//Lower the threshold to prevent filtering out darker green tones.
+	//		{
+	//			OtsuImgV1.at<uchar>(i, j) = 255;
+	//			nonZeroPixelCount++;
+	//		}
+	//		//background
+	//		//else
+	//		//{
+	//		//	OtsuImg.at<uchar>(i, j) = 0;
+	//		//}
+	//	}
+	//}
+	//auto end16 = std::chrono::high_resolution_clock::now();
+	//std::chrono::duration<double> elapsed16 = end16 - start16;
+
+	uchar* pSrc = src.data;
+	uchar* pOtsuImg = OtsuImg.data;
+
+	for (int i = 0; i < src.rows; i++) {
+		for (int j = 0; j < src.cols; j++) {
+			int idx = i * src.cols + j;  // Flatten 2D index to 1D
+			if (pSrc[idx] > 0.8 * thresh) {  // Check if pixel is foreground
+				pOtsuImg[idx] = 255;  // Mark as foreground
 				nonZeroPixelCount++;
 			}
-			//background
-			//else
-			//{
-			//	OtsuImg.at<uchar>(i, j) = 0;
-			//}
+			else {
+				pOtsuImg[idx] = 0;  // Mark as background
+			}
 		}
 	}
 
@@ -561,7 +628,7 @@ pair<Mat, float> CImgPro::OTSU(Mat src)
 	int totalPixel = src.rows * src.cols;
 	NonZeroPixelRatio = (float)nonZeroPixelCount / totalPixel;
 
-	return { OtsuImgV1, NonZeroPixelRatio };
+	return { OtsuImg, NonZeroPixelRatio };
 }
 
 Mat CImgPro::MorphologicalOperation(Mat src, int kernel_size, int cycle_num_e, int cycle_num_d)
@@ -596,40 +663,52 @@ Mat CImgPro::ClusterPointsDrawing(Mat& src, vector<Cluster>& points)
 	Scalar(0, 165, 255),   // orange
 	};
 
-	// Iterate through each set of coordinates and plot them on the image.
+	// Iterate through each cluster and draw points
 	for (int i = 0; i < points.size(); i++) {
-		bool firstPoint = true;
-		int id = i + 1;
-		for (int j = 0; j < points[i].points.size(); j++) {
-			int x = points[i].points[j].x;
-			int y = points[i].points[j].y;
+		// Determine color for the cluster based on index
+		Scalar clusterColor = colors[i % colors.size()];  // Rotate through colors if more than 12 clusters
 
-			// Determine the brush color based on the group to which the point belongs.
-			Scalar color = colors[i % colors.size()];
-			/*Scalar color = colors[i];*/
-
-			// Plot the point
-			circle(outimg, Point(x, y), 1, color, -1);
-
-			//Display the group number next to the first point.
-			if (firstPoint)
-			{
-				Point textPt1(x + 20, y + 90);
-				putText(outimg, to_string(id), textPt1, FONT_HERSHEY_SIMPLEX, 1, color, 3);
-				firstPoint = false;
-
-				//d1,d2,d3....
-				/*Point textPt2((points[i].averageX + 2029)/2, points[i].averageY-10);
-				string s = "d" + to_string(id);
-				putText(outimg, s, textPt2, FONT_HERSHEY_SIMPLEX, 4, Scalar(255, 255, 255), 8);
-				firstPoint = false;*/
-			}
-
-			/*arrowedLine(outimg, Point(points[i].averageX, points[i].averageY), Point(2029, points[i].averageY), Scalar(255, 255, 255), 2, 8, 0, 0.1);
-			arrowedLine(outimg, Point(2029, points[i].averageY), Point(points[i].averageX, points[i].averageY), Scalar(255, 255, 255), 2, 8, 0, 0.1);*/
+		for (const auto& p : points[i].points) {
+			// Plot the point using the determined color
+			circle(outimg, Point(p.x, p.y), 1, clusterColor, -1);
 		}
-
 	}
+
+
+	// Iterate through each set of coordinates and plot them on the image.
+	//for (int i = 0; i < points.size(); i++) {
+	//	bool firstPoint = true;
+	//	int id = i + 1;
+	//	for (int j = 0; j < points[i].points.size(); j++) {
+	//		int x = points[i].points[j].x;
+	//		int y = points[i].points[j].y;
+
+	//		// Determine the brush color based on the group to which the point belongs.
+	//		Scalar color = colors[i % colors.size()];
+	//		/*Scalar color = colors[i];*/
+
+	//		// Plot the point
+	//		circle(outimg, Point(x, y), 1, color, -1);
+
+	//		//Display the group number next to the first point.
+	//		//if (firstPoint)
+	//		//{
+	//		//	Point textPt1(x + 20, y + 90);
+	//		//	putText(outimg, to_string(id), textPt1, FONT_HERSHEY_SIMPLEX, 1, color, 3);
+	//		//	firstPoint = false;
+
+	//		//	//d1,d2,d3....
+	//		//	/*Point textPt2((points[i].averageX + 2029)/2, points[i].averageY-10);
+	//		//	string s = "d" + to_string(id);
+	//		//	putText(outimg, s, textPt2, FONT_HERSHEY_SIMPLEX, 4, Scalar(255, 255, 255), 8);
+	//		//	firstPoint = false;*/
+	//		//}
+
+	//		/*arrowedLine(outimg, Point(points[i].averageX, points[i].averageY), Point(2029, points[i].averageY), Scalar(255, 255, 255), 2, 8, 0, 0.1);
+	//		arrowedLine(outimg, Point(2029, points[i].averageY), Point(points[i].averageX, points[i].averageY), Scalar(255, 255, 255), 2, 8, 0, 0.1);*/
+	//	}
+
+	//}
 	/*line(outimg, Point(1316, 0), Point(1316, outimg.rows), Scalar(255, 255, 255), 4, 8, 0);
 	line(outimg, Point(2029, 0), Point(2029, outimg.rows), Scalar(255, 255, 255), 4, 8, 0);
 	line(outimg, Point(2742, 0), Point(2742, outimg.rows), Scalar(255, 255, 255), 4, 8, 0);
@@ -646,58 +725,9 @@ Mat CImgPro::ClusterPointsDrawing(Mat& src, vector<Cluster>& points)
 	return outimg;
 }
 
-Mat CImgPro::ClusterPoints(Mat& src, vector<Cluster>& points)
-{
-	Mat outimg(src.size(), CV_8UC3, Scalar(0, 0, 0));
-
-	vector<Scalar> colors = {
-	Scalar(0, 0, 255),     // red
-	Scalar(0, 255, 0),     // green
-	Scalar(255, 0, 0),     // blue
-	Scalar(255, 255, 0),   // yellow
-	Scalar(0, 255, 255),   // cyan
-	Scalar(255, 0, 255),   // magenta
-	Scalar(128, 0, 0),     // deep red
-	Scalar(0, 128, 0),     // dark green
-	Scalar(0, 0, 128),      // dark blue
-	Scalar(128, 128, 0),   // olive green
-	Scalar(128, 0, 128),   // purple
-	Scalar(0, 128, 128),   // turquoise
-	Scalar(0, 165, 255),   // orange
-	};
-
-	// Iterate through each set of coordinates and plot them on the image.
-	for (int i = 0; i < points.size(); i++) {
-		bool firstPoint = true;
-		int id = i + 1;
-		for (int j = 0; j < points[i].points.size(); j++) {
-			int x = points[i].points[j].x;
-			int y = points[i].points[j].y;
-
-			// Determine the brush color based on the group to which the point belongs.
-			Scalar color = colors[i % colors.size()];
-
-			// Plot the point
-			circle(outimg, Point(x, y), 1, color, -1);
-
-			//Display the group number next to the first point.
-			if (firstPoint)
-			{
-				Point textPt1(x + 20, y + 90);
-				putText(outimg, to_string(id), textPt1, FONT_HERSHEY_SIMPLEX, 1, color, 3);
-				firstPoint = false;
-			}
-		}
-
-	}
-
-
-	return outimg;
-}
-
 void CImgPro::RANSAC(Cluster& cluster, float thresh, Mat& outimg)
 {
-	vector<float> dis;
+	//vector<float> dis;
 	vector<CImgPro::Cluster> inliers;
 	Cluster tempPoints;
 	struct Line {
@@ -709,9 +739,10 @@ void CImgPro::RANSAC(Cluster& cluster, float thresh, Mat& outimg)
 
 	int best_inliers = 0;
 	float bestSlope = 0.0, bestIntercept = 0.0;
-
 	float iterations = 0.0, ConfidenceLevel = 0.99, Probability = 2.0 / cluster.points.size();
-	iterations = log((1 - ConfidenceLevel)) / log((1 - pow(Probability, 2)));
+
+	iterations = log(1 - ConfidenceLevel) / log(1 - pow(Probability, 2));
+
 	for (int j = 0; j < iterations; j++)		//Continuously iterate in this cluster
 	{
 		// Randomly select two different points
@@ -739,7 +770,7 @@ void CImgPro::RANSAC(Cluster& cluster, float thresh, Mat& outimg)
 
 		// Calculate distances from all points in this cluster to the line excluding points p1 and p2
 		float distance = 0;
-		for (auto p : cluster.points)
+		for (const auto& p : cluster.points)
 		{
 			if (p != p1 && p != p2)
 			{
@@ -790,23 +821,20 @@ vector<CImgPro::Cluster> CImgPro::KDTreeAcceleratedDBSCAN(Cluster& points, float
 	int currentClusterID = 0;
 	unordered_map<int, vector<int>> cachedNeighbours; // 用于缓存邻居查询结果
 
-	auto start1 = std::chrono::high_resolution_clock::now();
-
 	buildKDTree(points, epsilon, cachedNeighbours);  // 使用 KD-tree 进行邻居查找
 
-	auto end1 = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double> elapsed1 = end1 - start1;
 	
 	for (int i = 0; i < points.points.size(); ++i) {
-		if (clusterIDs[i] == -1) { // 如果该点未分类
+		if (clusterIDs[i] == -1) { // if point unclassified
 			vector<int> neighbours = cachedNeighbours[i]; // 直接获取缓存的邻居信息
 
-			if (neighbours.size() >= minPts) { // 如果该点是核心点
+			if (neighbours.size() >= minPts) { // if core point
 				expandCluster(points, clusterIDs, currentClusterID, i, epsilon, neighbours, cachedNeighbours);
 				currentClusterID++;
 			}
 		}
 	}
+	
 
 
 	// 构建簇
@@ -818,15 +846,17 @@ vector<CImgPro::Cluster> CImgPro::KDTreeAcceleratedDBSCAN(Cluster& points, float
 		}
 	}
 
+
 	// 计算每个簇的质心
 	for (Cluster& cluster : cluster_points) {
 		if (!cluster.points.empty()) {
+			float sumX = 0, sumY = 0;
 			for (Point& point : cluster.points) {
-				cluster.averageX += point.x;
-				cluster.averageY += point.y;
+				sumX += point.x;
+				sumY += point.y;
 			}
-			cluster.averageX /= cluster.points.size();
-			cluster.averageY /= cluster.points.size();
+			cluster.averageX = sumX / cluster.points.size();
+			cluster.averageY = sumY / cluster.points.size();
 		}
 	}
 
@@ -836,26 +866,29 @@ vector<CImgPro::Cluster> CImgPro::KDTreeAcceleratedDBSCAN(Cluster& points, float
 vector<CImgPro::Cluster> CImgPro::secondClusterBaseOnCenterX(vector<Cluster>& cluster_points, int imgCenterX, float cof)
 {
 	//imageCenterX is the baseline
-	vector<float> centroidDistances;
-	vector<float> centroidXCoords;
-	for (Cluster& cluster : cluster_points) {
-		float distance = abs(cluster.averageX - imgCenterX);
-		centroidDistances.push_back(distance);
-		centroidXCoords.push_back(cluster.averageX);
+
+	vector<float> centroidDistances(cluster_points.size(), 0.0f);
+	vector<float> centroidXCoords(cluster_points.size(), 0.0f);
+
+	float totalDistance = 0.0f;
+	for (int i = 0; i < cluster_points.size(); ++i) {
+		centroidDistances[i] = abs(cluster_points[i].averageX - imgCenterX);
+		centroidXCoords[i] = cluster_points[i].averageX;
+		totalDistance += centroidDistances[i];
 	}
 
 
-	float averageDistance = accumulate(centroidDistances.begin(), centroidDistances.end(), 0.0f) / centroidDistances.size();
+	float averageDistance = totalDistance / centroidDistances.size();
 
 
 	vector<Cluster> center;
+	float cof_avgDist = cof * averageDistance;
 	for (int i = 0; i < cluster_points.size(); ++i) {
-		if (centroidDistances[i] <= cof * averageDistance) {
+		if (centroidDistances[i] <= cof_avgDist) {
 			center.push_back(cluster_points[i]);
 		}
 	}
 
-	Cluster temp;
 
 	/*    Irrelevant code, kept for future research convenience.   */
 	// lfet side
@@ -892,8 +925,9 @@ vector<CImgPro::Cluster> CImgPro::secondClusterBaseOnCenterX(vector<Cluster>& cl
 	}
 	*/
 
+	Cluster temp;
 	vector<Cluster> final_cluster_points;
-	Point minPoint = Point(imgCenterX - 0.07 * imgCols, 0);
+	Point minPoint = Point(imgCenterX - 0.07 * imgCols, 0); // left boundary
 	Point maxPoint = Point(imgCenterX + 0.07 * imgCols, 0);
 
 	temp.CategID.push_back(minPoint);
@@ -904,6 +938,7 @@ vector<CImgPro::Cluster> CImgPro::secondClusterBaseOnCenterX(vector<Cluster>& cl
 		Cluster& cluster = *it;
 		cluster.ID = 'c';
 		bool flag = isClusterPassed(cluster, minPoint, maxPoint, cluster.ID);
+
 		if (flag) {
 			temp.points.insert(temp.points.end(), cluster.points.begin(), cluster.points.end());
 			it = center.erase(it); // Delete visited clusters and update the iterator.
@@ -912,34 +947,23 @@ vector<CImgPro::Cluster> CImgPro::secondClusterBaseOnCenterX(vector<Cluster>& cl
 			++it; // Continue iterating to the next cluster.
 		}
 	}
+
 	final_cluster_points.push_back(temp);
 
-	vector<int> firstHistogram(imgCols, 0);
-	for (Cluster& cluster : final_cluster_points) {
-		for (Point& point : cluster.points) {
-			int key = point.x;
-			firstHistogram[key]++;
-		}
-	}
+	//vector<int> firstHistogram(imgCols, 0);
+	//for (Cluster& cluster : final_cluster_points) {
+	//	for (Point& point : cluster.points) {
+	//		int key = point.x;
+	//		firstHistogram[key]++;
+	//	}
+	//}
 
 
 	temp.points.clear();
 	temp.CategID.clear();
 
+
 	return final_cluster_points;
-}
-
-vector<int> CImgPro::regionQuery(Cluster& points, Point& point, double epsilon)
-{
-	vector<int> neighbours;
-
-	for (int i = 0; i < points.points.size(); ++i) {
-		Point& p = points.points[i];
-		if (euclidean_distance(point, p) <= epsilon) {
-			neighbours.push_back(i); // Add the indices of samples within �� distance to the neighborhood.
-		}
-	}
-	return neighbours;
 }
 
 void CImgPro::buildKDTree(Cluster& points, float epsilon, unordered_map<int, vector<int>>& cachedNeighbours) {
@@ -955,12 +979,29 @@ void CImgPro::buildKDTree(Cluster& points, float epsilon, unordered_map<int, vec
 	// 使用 KD-tree 进行邻居查找
 	cv::flann::KDTreeIndexParams indexParams;
 	cv::flann::Index kdtree(data, indexParams);  // 构建 KD-tree
+ 
 
+	int chunk_size;
 	// 遍历每个点，查询邻居
+	if (CImgPro::imgRows == 480)
+	{
+		chunk_size = 100;
+	}
+	else if (CImgPro::imgRows == 1080) // for 1080p
+	{
+		chunk_size = 1000;
+	}
+	else
+	{
+		chunk_size = 2000;
+	}
+
+	#pragma omp parallel for schedule(dynamic, chunk_size) 
 	for (int i = 0; i < points.points.size(); ++i) {
 		std::vector<float> query = { static_cast<float>(points.points[i].x), static_cast<float>(points.points[i].y) };
 		std::vector<int> neighbours(20);   // 初始化大小为 20
 		std::vector<float> dists(20);      // 初始化大小为 20
+		
 
 		// 使用 KD-tree 进行邻居查找，传递正确的 SearchParams 对象
 		int foundNeighbours = kdtree.radiusSearch(query, neighbours, dists, epsilon, neighbours.size(), cv::flann::SearchParams(-1, 0.0f, false));
@@ -970,13 +1011,17 @@ void CImgPro::buildKDTree(Cluster& points, float epsilon, unordered_map<int, vec
 			neighbours.resize(foundNeighbours);  // 调整邻居向量大小为实际找到的邻居数
 			dists.resize(foundNeighbours);      // 调整距离向量大小
 		}
-		else {
-			neighbours.clear();  // 如果没有找到邻居，则清空该向量
-		}
+		//else {
+		//	neighbours.clear();  // 如果没有找到邻居，则清空该向量
+		//}
 
-		// 存储邻居到缓存中
-		cachedNeighbours[i] = neighbours;
+		// 确保并行修改缓存时是线程安全的
+		#pragma omp critical
+		{
+			cachedNeighbours[i] = neighbours;
+		}
 	}
+
 }
 
 void CImgPro::expandCluster(Cluster& points, vector<int>& clusterIDs, int currentClusterID,
@@ -986,13 +1031,12 @@ void CImgPro::expandCluster(Cluster& points, vector<int>& clusterIDs, int curren
 	processQueue.push(pointIndex);
 	clusterIDs[pointIndex] = currentClusterID; // Mark the current point as the current cluster ID
 
-
 	while (!processQueue.empty()) {
 		int currentIndex = processQueue.front();
 		processQueue.pop();
 
 		// 直接从缓存中获取邻居
-		vector<int> newNeighbours = cachedNeighbours[currentIndex];
+		vector<int>& newNeighbours = cachedNeighbours[currentIndex];
 
 		if (newNeighbours.size() > 1) { // Number of samples in the neighborhood of density-connected points is greater than or equal to minPts
 			for (int i : newNeighbours) {
@@ -1003,6 +1047,7 @@ void CImgPro::expandCluster(Cluster& points, vector<int>& clusterIDs, int curren
 			}
 		}
 	}
+
 }
 
 //Improved Least Squares Fitting Capable of Fitting Vertical Lines
@@ -1012,7 +1057,7 @@ void CImgPro::leastSquaresFit_edit(Cluster& cluster, Mat& outimg)
 	//for (int i = 0; i < points.size(); i++)
 	//{
 	double sumX = 0.0, sumY = 0.0, avgX = 0.0, avgY = 0.0;
-	for (auto p : cluster.points)
+	for (auto& p : cluster.points)
 	{
 		sumX += p.x;
 		sumY += p.y;
@@ -1021,19 +1066,18 @@ void CImgPro::leastSquaresFit_edit(Cluster& cluster, Mat& outimg)
 	avgY = sumY / cluster.points.size();
 
 	double L_xx = 0.0, L_yy = 0.0, L_xy = 0.0;
-	for (auto p : cluster.points)
+	for (auto& p : cluster.points)
 	{
 		L_xx += (p.x - avgX) * (p.x - avgX);
 		L_xy += (p.x - avgX) * (p.y - avgY);
 		L_yy += (p.y - avgY) * (p.y - avgY);
 	}
 
-	double lamd1 = 0.0, lamd2 = 0.0, lamd = 0.0, m = 0.0, n = 0.0;
-	m = L_xx + L_yy;
-	n = L_xx * L_yy - L_xy * L_xy;
-	lamd1 = (m + sqrt(m * m - 4 * n)) / 2;
-	lamd2 = (m - sqrt(m * m - 4 * n)) / 2;
-	lamd = lamd1 < lamd2 ? lamd1 : lamd2;
+	double m = L_xx + L_yy;
+	double n = L_xx * L_yy - L_xy * L_xy;
+	double lamd1 = (m + sqrt(m * m - 4 * n)) / 2;
+	double lamd2 = (m - sqrt(m * m - 4 * n)) / 2;
+	double lamd = std::min(lamd1, lamd2);
 	double d = sqrt((L_xx - lamd) * (L_xx - lamd) + L_xy * L_xy);
 
 	double a, b, c;
@@ -1049,18 +1093,19 @@ void CImgPro::leastSquaresFit_edit(Cluster& cluster, Mat& outimg)
 		{
 			a = L_xy / d;
 			b = (lamd - L_xx) / d;
-			c = -a * avgX - b * avgY;
+			
 		}
 		else
 		{
 			a = -L_xy / d;
 			b = (L_xx - lamd) / d;
-			c = -a * avgX - b * avgY;
+			
 		}
+		c = -a * avgX - b * avgY;
 	}
 
 
-	if (b != 0 && (-a / b >= 1 || -a / b <= -1))
+	if (b != 0 && (abs(a / b) >= 1))
 	{
 		Scalar color = CV_RGB(255, 0, 0);
 		line(outimg, Point(-c / a, 0), Point((outimg.rows * (-b) - c) / a, outimg.rows), color, 20, 8, 0);

@@ -9,6 +9,7 @@
 
 
 
+
 using namespace std;
 using namespace cv;
 
@@ -32,11 +33,10 @@ public:
 
 	double thresholdingSigmoid(double NonZeroPixelRatio, double k, double centerx);
 	Mat MedianBlur(Mat srcimg, int kernel_size);
-	Mat verticalProjection(Mat& img, const vector<Cluster>& clusters, double cof);
+	void verticalProjection(Mat& img, const vector<Cluster>& clusters, double cof);
 	Mat MorphologicalOperation(Mat src, int kernel_size, int cycle_num_e, int cycle_num_d);
 	Mat ClusterPointsDrawing(Mat& src, vector<Cluster>& points);
-	Mat ClusterPoints(Mat& src, vector<Cluster>& points);
-	pair<Mat, int> verticalProjectionForCenterX(const vector<int>& histogram);
+	int verticalProjectionForCenterX(const vector<int>& histogram);
 	pair<Mat, vector<int>> EightConnectivity(Mat& img, float cof);
 	pair<Mat, float> OTSU(Mat src);
 	pair<int, int>NZPR_to_Erosion_Dilation(float NZPR, Mat& img);
@@ -64,7 +64,6 @@ private:
 	Point min(vector<Point>& points) const;
 	Point max(vector<Point>& points) const;
 	vector<Cluster> ComparePoints(vector<Cluster>& points);
-	vector<int> regionQuery(Cluster& points, Point& point, double epsilon);
 	void expandCluster(Cluster& points, vector<int>& clusterIDs, int currentClusterID,
 		int pointIndex, double epsilon, const vector<int>& neighbours, unordered_map<int, vector<int>>& cachedNeighbours);
 	vector<Cluster> BaseCluster(Mat featureimage, int beginHeight, int areaHeight, int areaWidth);

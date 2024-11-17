@@ -170,9 +170,8 @@ QImage fieldNavigationProject::processImage(cv::String& filename, cv::Size& targ
 
 	//Calculate the x-coordinate of the center row baseline within the crop based on the histogram analysis
 	auto start15 = std::chrono::high_resolution_clock::now();
-	auto result_VPFCX = myImgPro.verticalProjectionForCenterX(result_EC.second);
-	Mat firstHistorImg = result_VPFCX.first;
-	int centerX = result_VPFCX.second;//baseline
+	int centerX = myImgPro.verticalProjectionForCenterX(result_EC.second);//baseline
+	//Mat firstHistorImg = result_VPFCX.first;
 	auto end15 = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> elapsed15 = end15 - start15;
 
@@ -227,10 +226,10 @@ QImage fieldNavigationProject::processImage(cv::String& filename, cv::Size& targ
 
 	auto start18 = std::chrono::high_resolution_clock::now();
 	//Thresholding segmentation of images
-	Mat HistogramImg;
+	//Mat HistogramImg;
 	double tsd = myImgPro.thresholdingSigmoid(NonZeroPixelRatio, -8.67, 0.354);//0.1-0.9  0.4-0.4
 	//double tsd = myImgPro.thresholdingSigmoid(CImgPro::NonZeroPixelRatio, -4.977, 0.3185);//0.04-0.8  0.4-0.4
-	HistogramImg = myImgPro.verticalProjection(resizedImage, second_cluster_points, tsd);
+	myImgPro.verticalProjection(resizedImage, second_cluster_points, tsd);
 	myImgPro.retainMainStem(second_cluster_points);
 	auto end18 = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> elapsed18 = end18 - start18;
