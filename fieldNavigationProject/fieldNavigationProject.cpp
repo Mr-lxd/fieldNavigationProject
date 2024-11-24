@@ -122,7 +122,7 @@ QImage fieldNavigationProject::processImage(cv::String& filename, cv::Size& targ
 	auto start1 = std::chrono::high_resolution_clock::now();
 	myImgPro.NormalizedExG(resizedImage, ExGImage);
 	auto end1 = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double> elapsed1 = end1 - start1;
+	std::chrono::duration<double> elapsed_ExG = end1 - start1;
 
 	/*
 		Median filtering is more effective than Gaussian filtering in dealing with salt-and-pepper noise
@@ -141,21 +141,23 @@ QImage fieldNavigationProject::processImage(cv::String& filename, cv::Size& targ
 	Mat OtsuImg = temp.clone();
 	NonZeroPixelRatio = result_OTSU.second;
 	auto end12 = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double> elapsed12 = end12 - start12;
+	std::chrono::duration<double> elapsed_OTSU = end12 - start12;
 
 	/*
 		Morphological operations are helpful for eliminating weeds and side branches, but also reduce crop details
 	*/
-	auto start13 = std::chrono::high_resolution_clock::now();
+	
 	Mat MorphImg;
 	int flag2 = 0;
 	auto result_open = myImgPro.NZPR_to_Erosion_Dilation(NonZeroPixelRatio, resizedImage);
+
+	auto start13 = std::chrono::high_resolution_clock::now();
 	if (result_open.first > 0 || result_open.second > 0) {
 		MorphImg = myImgPro.MorphologicalOperation(OtsuImg, 3, result_open.first, result_open.second);
 		flag2 = 1;
 	}
 	auto end13 = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double> elapsed13 = end13 - start13;
+	std::chrono::duration<double> elapsed_Morph = end13 - start13;
 
 
 	/*
@@ -165,15 +167,15 @@ QImage fieldNavigationProject::processImage(cv::String& filename, cv::Size& targ
 	pair<Mat, vector<int>> result_EC = myImgPro.EightConnectivity(flag2 == 1 ? MorphImg : OtsuImg, 0.7);
 	Mat ConnectImg = result_EC.first;
 	auto end14 = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double> elapsed14 = end14 - start14;
+	std::chrono::duration<double> elapsed_EightConnect = end14 - start14;
 
 
 	//Calculate the x-coordinate of the center row baseline within the crop based on the histogram analysis
-	auto start15 = std::chrono::high_resolution_clock::now();
+	//auto start15 = std::chrono::high_resolution_clock::now();
 	int centerX = myImgPro.verticalProjectionForCenterX(result_EC.second);//baseline
 	//Mat firstHistorImg = result_VPFCX.first;
-	auto end15 = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double> elapsed15 = end15 - start15;
+	//auto end15 = std::chrono::high_resolution_clock::now();
+	//std::chrono::duration<double> elapsed_VPFX = end15 - start15;
 
 
 	/*
@@ -184,7 +186,7 @@ QImage fieldNavigationProject::processImage(cv::String& filename, cv::Size& targ
 	Mat featureImg(ConnectImg.size(), CV_8UC1, Scalar(0));
 	myImgPro.processImageWithWindow(ConnectImg, featureImg, reduce_points, 8, 8, 1);
 	auto end16 = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double> elapsed16 = end16 - start16;
+	std::chrono::duration<double> elapsed_ProWindowFirst = end16 - start16;
 
 
 	/*
@@ -205,10 +207,10 @@ QImage fieldNavigationProject::processImage(cv::String& filename, cv::Size& targ
 	auto start161 = std::chrono::high_resolution_clock::now();
 	vector<CImgPro::Cluster> first_cluster_points = myImgPro.KDTreeAcceleratedDBSCAN(reduce_points, epsilon, minPts);
 	auto end161 = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double> elapsed161 = end161 - start161;
+	std::chrono::duration<double> elapsed_KDDBSCAN = end161 - start161;
 
 
-	auto start17 = std::chrono::high_resolution_clock::now();
+	//auto start17 = std::chrono::high_resolution_clock::now();
 	float cof = 0.65;//1
 	vector<CImgPro::Cluster> second_cluster_points;
 	do
@@ -216,23 +218,23 @@ QImage fieldNavigationProject::processImage(cv::String& filename, cv::Size& targ
 		second_cluster_points = myImgPro.secondClusterBaseOnCenterX(first_cluster_points, centerX, cof);
 		cof += 0.05;
 	} while (second_cluster_points.size() == 0);
-	auto end17 = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double> elapsed17 = end17 - start17;
+	//auto end17 = std::chrono::high_resolution_clock::now();
+	//std::chrono::duration<double> elapsed_SCBCX = end17 - start17;
 
 	//Mat F_ClusterImg = myImgPro.ClusterPointsDrawing(ExGImage, first_cluster_points);
 	//myImgPro.SaveImg(F_ClusterImg);
 	//Mat S_ClusterImg = myImgPro.ClusterPointsDrawing(ExGImage, second_cluster_points);
 
 
-	auto start18 = std::chrono::high_resolution_clock::now();
+	//auto start18 = std::chrono::high_resolution_clock::now();
 	//Thresholding segmentation of images
 	//Mat HistogramImg;
 	double tsd = myImgPro.thresholdingSigmoid(NonZeroPixelRatio, -8.67, 0.354);//0.1-0.9  0.4-0.4
 	//double tsd = myImgPro.thresholdingSigmoid(CImgPro::NonZeroPixelRatio, -4.977, 0.3185);//0.04-0.8  0.4-0.4
 	myImgPro.verticalProjection(resizedImage, second_cluster_points, tsd);
 	myImgPro.retainMainStem(second_cluster_points);
-	auto end18 = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double> elapsed18 = end18 - start18;
+	//auto end18 = std::chrono::high_resolution_clock::now();
+	//std::chrono::duration<double> elapsed_thresholding = end18 - start18;
 
 	Mat MainStemImg = myImgPro.ClusterPointsDrawing(ExGImage, second_cluster_points);
 
@@ -246,7 +248,7 @@ QImage fieldNavigationProject::processImage(cv::String& filename, cv::Size& targ
 	Mat ExtractImg(MainStemImg.size(), CV_8UC3, Scalar(255, 255, 255));
 	myImgPro.processImageWithWindow(MainStemImg, ExtractImg, final_points, 16, 32, 2);
 	auto end19 = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double> elapsed19 = end19 - start19;
+	std::chrono::duration<double> elapsed_ProWindowSecond = end19 - start19;
 
 
 	auto start20 = std::chrono::high_resolution_clock::now();
@@ -263,7 +265,7 @@ QImage fieldNavigationProject::processImage(cv::String& filename, cv::Size& targ
 		myImgPro.RANSAC(final_points, 0.13, RansacImg);
 	}
 	auto end20 = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double> elapsed20 = end20 - start20;
+	std::chrono::duration<double> elapsed_RANSAC = end20 - start20;
 
 	// cv::Mat convert to QImage
 	QImage qimg(RansacImg.data, RansacImg.cols, RansacImg.rows, RansacImg.step, QImage::Format_RGB888);
@@ -271,9 +273,11 @@ QImage fieldNavigationProject::processImage(cv::String& filename, cv::Size& targ
 	auto end = std::chrono::high_resolution_clock::now();
 	processingDuration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-	/*string timefilename = string(std::getenv("USERPROFILE")) + "\\Desktop\\processing_times.txt";
-	int processingTime = processingDuration.count();
-	myImgPro.saveProcessingTimes(processingTime, timefilename);*/
+	myImgPro.SaveImg(RansacImg, filename);
+
+	//string timefilename = string(std::getenv("USERPROFILE")) + "\\Desktop\\times.txt";
+	//int processingTime = processingDuration.count();
+	//myImgPro.saveProcessingTimes(processingTime, timefilename);
 
 	return qimg.rgbSwapped();
 }

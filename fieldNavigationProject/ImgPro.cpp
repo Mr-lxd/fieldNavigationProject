@@ -1115,7 +1115,7 @@ void CImgPro::leastSquaresFit_edit(Cluster& cluster, Mat& outimg)
 	//}
 }
 
-void CImgPro::SaveImg(Mat& img)
+void CImgPro::SaveImg(Mat& img, string& inputFilePath)
 {
 	// 获取用户桌面路径
 	char* homePath = std::getenv("USERPROFILE");  // 获取用户主目录
@@ -1125,11 +1125,20 @@ void CImgPro::SaveImg(Mat& img)
 	}
 	std::string desktopPath = std::string(homePath) + "\\Desktop\\";  // 拼接到桌面路径
 
-	// 设置带有路径和扩展名的输出文件名
-	std::string outfilename = desktopPath + "output_image3.jpg";
+	// 提取输入文件名（不带路径）
+	std::string inputFileName = inputFilePath.substr(inputFilePath.find_last_of("/\\") + 1);
+
+	// 设置带有路径的输出文件名
+	std::string outfilename = desktopPath + inputFileName;
 
 	// 保存图片
 	bool success = cv::imwrite(outfilename, img);
+	if (success) {
+		std::cout << "图像已保存到: " << outfilename << std::endl;
+	}
+	else {
+		std::cerr << "保存图像失败。" << std::endl;
+	}
 }
 
 void CImgPro::saveProcessingTimes(int newTime, const std::string& filename)

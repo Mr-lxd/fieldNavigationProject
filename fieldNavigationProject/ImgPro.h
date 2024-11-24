@@ -47,7 +47,7 @@ public:
 	void NormalizedExG(Mat& srcimg, Mat& outimg);
 	void RANSAC(Cluster& points, float thresh, Mat& outimg);
 	void leastSquaresFit_edit(Cluster& cluster, Mat& outimg);
-	void SaveImg(Mat& img);
+	void SaveImg(Mat& img, string& inputFilePath);
 	void saveProcessingTimes(int newTime, const std::string& filename);
 
 private:
