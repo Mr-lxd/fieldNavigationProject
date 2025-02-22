@@ -10,3 +10,4 @@ To run this project, you need to install the following dependencies:
 - Visual Studio 2019 or higher
 ## References
 If you use this project or dataset, please cite the following paper:
+Li, H., Lai, X., Mo, Y., He, D., & Wu, T. (2025). Pixel-wise navigation line extraction of cross-growth-stage seedlings in complex sugarcane fields and extension to corn and rice. Frontiers in Plant Science, 15, 1499896.
